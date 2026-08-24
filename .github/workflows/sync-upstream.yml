@@ -1,0 +1,82 @@
+# DVN-CIPP — replace pull[bot] with a sync we control.
+#
+# WHY: pull[bot] is a free third-party service. It merged PRs #50-#59 daily,
+# then silently stopped merging on 2026-07-30 while still updating the PR.
+# The frontend sat 24 days stale at v10.7.4 against a v10.9.1 backend and
+# nothing raised a flag. This runs in our repo and FAILS LOUDLY instead.
+#
+# ⚠️ NEVER force-sync / hard-reset this fork to upstream.
+# .github/workflows/azure-static-web-apps-orange-moss-0db485c0f.yml is DVN-ONLY
+# and does not exist upstream. A force-sync deletes it and kills the deploy.
+# Merge only. That is why this uses `git merge`, never `git reset --hard`.
+
+name: Sync fork from upstream
+
+on:
+  schedule:
+    - cron: '10 5 * * *'      # daily 05:10 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write             # push the merge
+  actions: write              # dispatch the SWA deploy
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/KelvinTegelaar/CIPP.git
+          git fetch upstream main
+
+      - name: Merge upstream/main
+        id: merge
+        run: |
+          BEFORE=$(git rev-parse HEAD)
+          if ! git merge --no-edit upstream/main; then
+            git merge --abort || true
+            echo "::error::Merge conflict with upstream. Resolve by hand — do NOT force-sync, the SWA workflow is DVN-only."
+            exit 1
+          fi
+          AFTER=$(git rev-parse HEAD)
+          if [ "$BEFORE" = "$AFTER" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already up to date."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git log --oneline "$BEFORE..$AFTER" | head -20
+          fi
+
+      - name: Push
+        if: steps.merge.outputs.changed == 'true'
+        run: git push origin main
+
+      # A push made with GITHUB_TOKEN does NOT trigger other workflows
+      # (GitHub loop-prevention), so the SWA deploy must be dispatched explicitly.
+      # This is why the deploy workflow needs `workflow_dispatch:` added to it.
+      - name: Trigger SWA deploy
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run azure-static-web-apps-orange-moss-0db485c0f.yml --ref main
+
+      - name: Report
+        run: |
+          echo "### CIPP fork sync" >> "$GITHUB_STEP_SUMMARY"
+          echo "changed: ${{ steps.merge.outputs.changed }}" >> "$GITHUB_STEP_SUMMARY"
+          grep -m1 '"version"' package.json >> "$GITHUB_STEP_SUMMARY" || true

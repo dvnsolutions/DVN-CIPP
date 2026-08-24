@@ -1,8 +1,8 @@
+# main is synced by .github/workflows/sync-upstream.yml, NOT by pull[bot].
+# pull[bot] silently stopped merging on 2026-07-30 while still updating its PR,
+# leaving the frontend 24 days stale with no alarm. Do not re-add a `main` rule.
 version: "1"
 rules:
-  - base: main
-    upstream: KelvinTegelaar:main
-    mergeMethod: merge
   - base: dev
     upstream: KelvinTegelaar:dev
     mergeMethod: none
